@@ -75,8 +75,8 @@ export default function Roster({ onUpdate, sessionId }: { onUpdate: () => void, 
     };
 
     const activePlayerIds = session?.playerIds || [];
-    const activePlayers = players.filter(p => activePlayerIds.includes(p.id));
-    const inactivePlayers = players.filter(p => !activePlayerIds.includes(p.id));
+    const activePlayers = players.filter(p => activePlayerIds.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const inactivePlayers = players.filter(p => !activePlayerIds.includes(p.id)).sort((a, b) => a.name.localeCompare(b.name));
     const isReadOnly = session && !session.isActive;
 
     return (

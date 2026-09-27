@@ -1048,18 +1048,14 @@
     {
       "id": "54859c31-31c8-4e24-a908-025aa63708cd",
       "startDate": "1/16/2026, 12:20:20 PM",
-      "playerIds": [
-        "player-4",
-        "player-3",
-        "player-6",
-        "player-2",
-        "player-1",
-        "player-7",
-        "player-5",
-        "player-9",
-        "player-10",
-        "player-8"
-      ],
+      "playerIds": [],
+      "isActive": false,
+      "isClosed": true
+    },
+    {
+      "id": "b88bb382-086e-4a19-bb07-deaf33931b01",
+      "startDate": "9/26/2026, 8:00:25 PM",
+      "playerIds": [],
       "isActive": true,
       "isClosed": false
     }
