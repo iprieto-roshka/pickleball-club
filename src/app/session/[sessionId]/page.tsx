@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Roster from '@/components/Roster';
 import MatchControl from '@/components/MatchControl';
 import MatchHistory from '@/components/MatchHistory';
+import Leaderboard from '@/components/Leaderboard';
 import SessionHeader from '@/components/SessionHeader';
 import { RosterSession } from '@/lib/types';
 
@@ -36,23 +37,25 @@ export default function SessionDashboard() {
 
       {/* Main content */}
       <main className="min-h-screen bg-gray-50 p-4 md:p-8 font-[family-name:var(--font-geist-sans)]">
-        <div className="max-w-6xl mx-auto space-y-6">
-          {session?.isActive && (
+          <div className="max-w-6xl mx-auto">
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-              {/* Roster */}
-              <div className="md:col-span-4 order-2 md:order-1">
-                <Roster onUpdate={handleUpdate} sessionId={sessionId} />
+              {/* Left Column */}
+              <div className="md:col-span-4 space-y-6 order-2 md:order-1">
+                {session?.isActive && (
+                  <Roster onUpdate={handleUpdate} sessionId={sessionId} />
+                )}
+                <Leaderboard refreshTrigger={refreshTrigger} sessionId={sessionId} />
               </div>
 
-              {/* Active Match */}
+              {/* Right Column */}
               <div className="md:col-span-8 order-1 md:order-2">
-                <MatchControl onUpdate={handleUpdate} refreshTrigger={refreshTrigger} sessionId={sessionId} />
+                {session?.isActive && (
+                  <MatchControl onUpdate={handleUpdate} refreshTrigger={refreshTrigger} sessionId={sessionId} />
+                )}
+                <MatchHistory onUpdate={handleUpdate} refreshTrigger={refreshTrigger} sessionId={sessionId} defaultExpanded />
               </div>
             </div>
-          )}
-
-          <MatchHistory onUpdate={handleUpdate} refreshTrigger={refreshTrigger} sessionId={sessionId} defaultExpanded />
-        </div>
+          </div>
       </main>
     </>
   );
