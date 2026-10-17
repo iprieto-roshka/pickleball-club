@@ -36,6 +36,7 @@ export default function MatchControl({ onUpdate, refreshTrigger, sessionId }: Ma
     const [showAnalytics, setShowAnalytics] = useState(false);
     const [matchMode, setMatchMode] = useState<'rotation' | 'strict' | 'playoff'>('rotation');
     const [pendingProposal, setPendingProposal] = useState<PendingProposal | null>(null);
+    const score1Refs = useRef<Record<string, HTMLInputElement | null>>({});
     const score2Refs = useRef<Record<string, HTMLInputElement | null>>({});
 
     const hasDuplicatePendingPlayers = pendingProposal
@@ -314,6 +315,9 @@ export default function MatchControl({ onUpdate, refreshTrigger, sessionId }: Ma
             if (team === 1 && value.length === 2) {
                 score2Refs.current[matchId]?.focus();
             }
+            if (team === 2 && value.length === 2) {
+                score1Refs.current[matchId]?.focus();
+            }
         }
     }
 
@@ -513,6 +517,7 @@ export default function MatchControl({ onUpdate, refreshTrigger, sessionId }: Ma
                                         <div className="flex items-center justify-center gap-3">
                                             <button onClick={() => updateScore(match.id, 1, 'dec')} className="p-2 w-10 h-10 bg-gray-200 rounded-full font-bold hover:bg-gray-300 active:scale-95">-</button>
                                             <input
+                                                ref={(el) => { score1Refs.current[match.id] = el; }}
                                                 type="text"
                                                 inputMode="numeric"
                                                 value={scores.s1}
