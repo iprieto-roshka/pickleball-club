@@ -143,7 +143,7 @@ export default function MatchmakingRules({ defaultExpanded = false }: { defaultE
                             <p className="text-gray-700 font-medium mb-3">Balances the Player Matchups grids so nobody keeps playing with, or against, the same people.</p>
                             <div className="flex gap-2">
                                 <span className="font-semibold min-w-[20px] text-gray-500">1.</span>
-                                <span><strong className="text-gray-800">Fair Court Time:</strong> Players who played 2 in a row rest when possible, and only the players with the fewest games are considered</span>
+                                <span><strong className="text-gray-800">Fair Court Time:</strong> Players who played their last 2 matches back-to-back rest when possible (on any court), and only the players with the fewest games are considered. Late arrivals count as one game less than the player with the fewest, so they play next without having to catch up</span>
                             </div>
                             <div className="flex gap-2">
                                 <span className="font-semibold min-w-[20px] text-gray-500">2.</span>

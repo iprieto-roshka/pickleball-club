@@ -553,6 +553,63 @@ export class Matchmaker {
     }
 
     /**
+     * Helper: Identify players who played their last 2 matches back-to-back and would
+     * now play a third without rest. Works with multiple courts: a new match on a court
+     * means the previous match there finished, so a player rested if a match started
+     * on the court they left without them.
+     */
+    private static identifyBackToBackPlayers(playerIds: string[], history: Match[]): Set<string> {
+        const fatigued = new Set<string>();
+        const sortedHistory = [...history].sort((a, b) => a.timestamp - b.timestamp);
+        const courtOf = (match: Match) => match.courtNumber ?? 0;
+        const nextOnCourt = (match: Match) =>
+            sortedHistory.find(m => m.timestamp > match.timestamp && courtOf(m) === courtOf(match));
+
+        playerIds.forEach(id => {
+            const played = sortedHistory.filter(m => m.team1.includes(id) || m.team2.includes(id));
+            if (played.length < 2) return;
+            const previous = played[played.length - 2];
+            const last = played[played.length - 1];
+
+            // No match started on previous's court before last (no rest in between),
+            // and nothing has started on last's court since (no rest after)
+            const afterPrevious = nextOnCourt(previous);
+            const restedBetween = afterPrevious !== undefined && afterPrevious !== last && afterPrevious.timestamp < last.timestamp;
+            if (!restedBetween && !nextOnCourt(last)) {
+                fatigued.add(id);
+            }
+        });
+
+        return fatigued;
+    }
+
+    /**
+     * Helper: Games credited to late arrivals. When a player plays their first match,
+     * they are credited one game less than the player with the fewest games so far,
+     * so from then on they rotate like everyone else.
+     */
+    private static getLateArrivalCredits(history: Match[]): Map<string, number> {
+        const credits = new Map<string, number>();
+        const games = new Map<string, number>(); // Games played plus credit
+        const sortedHistory = [...history].sort((a, b) => a.timestamp - b.timestamp);
+
+        sortedHistory.forEach(match => {
+            const matchPlayers = [...match.team1, ...match.team2];
+            const fewestGames = games.size > 0 ? Math.min(...games.values()) : 0;
+
+            matchPlayers.forEach(id => {
+                if (games.has(id)) return;
+                const credit = Math.max(0, fewestGames - 1);
+                credits.set(id, credit);
+                games.set(id, credit); // Credited games count for later arrivals too
+            });
+            matchPlayers.forEach(id => games.set(id, (games.get(id) ?? 0) + 1));
+        });
+
+        return credits;
+    }
+
+    /**
      * Helper: Repetition cost of a configuration (lower is better).
      * Each pairing adds 2*count+1 — the increase of that pairing's squared count —
      * so pairings that already repeat a lot are penalized the most.
@@ -594,19 +651,23 @@ export class Matchmaker {
     ): MatchProposal | null {
         if (availablePlayerIds.length < 4) return null;
 
-        const fatigued = this.identifyFatiguedPlayers(history);
+        const fatigued = this.identifyBackToBackPlayers(availablePlayerIds, history);
         const playerStats = this.calculatePlayerStats(availablePlayerIds, history);
         const historicalTeams = this.getHistoricalTeams(history);
         const counts = this.buildMatchupCounts(history);
 
-        // 1. Who plays: avoid fatigued players if possible, then keep only the
+        // 1. Who plays: as few fatigued players as possible, then keep only the
         //    combinations with the fewest games played so nobody is left on the bench
         const allCombinations = this.generateAllPlayerCombinations(availablePlayerIds);
-        const restedCombinations = allCombinations.filter(combo => combo.every(id => !fatigued.has(id)));
-        const candidatesByFatigue = restedCombinations.length > 0 ? restedCombinations : allCombinations;
+        const fatigueOf = (combo: string[]) => combo.filter(id => fatigued.has(id)).length;
+        const minFatigue = Math.min(...allCombinations.map(fatigueOf));
+        const candidatesByFatigue = allCombinations.filter(combo => fatigueOf(combo) === minFatigue);
 
-        const gamesOf = (combo: string[]) =>
-            combo.reduce((sum, id) => sum + (playerStats.get(id)?.gamesPlayed ?? 0), 0);
+        // Late arrivals are credited the games they missed (see getLateArrivalCredits),
+        // so they get priority for one match instead of playing every match to catch up
+        const credits = this.getLateArrivalCredits(history);
+        const effectiveGames = (id: string) => (playerStats.get(id)?.gamesPlayed ?? 0) + (credits.get(id) ?? 0);
+        const gamesOf = (combo: string[]) => combo.reduce((sum, id) => sum + effectiveGames(id), 0);
         const minGames = Math.min(...candidatesByFatigue.map(gamesOf));
         const candidates = candidatesByFatigue.filter(combo => gamesOf(combo) === minGames);
 
