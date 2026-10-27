@@ -31,6 +31,11 @@ export class Matchmaker {
     private static readonly UNUSED_PARTNERSHIP_BONUS = 150;
     private static readonly BOTH_TEAMS_UNUSED_BONUS = 300; // Extra bonus when both teams are fresh
 
+    // Best Match weights: a match creates 2 partner pairs but 4 opponent pairs,
+    // so partner repeats weigh double to keep both matrices on the same scale
+    private static readonly BEST_MATCH_PARTNER_WEIGHT = 2;
+    private static readonly BEST_MATCH_OPPONENT_WEIGHT = 1;
+
     /**
      * Helper: Normalize team pairing to consistent string for comparison
      * Always sorts player IDs so [p1, p2] and [p2, p1] are treated as same team
@@ -523,6 +528,122 @@ export class Matchmaker {
             mainReason: "Strict queue: longest-waiting players selected.",
             scoringBreakdown: reasonData.breakdown,
             analytics
+        };
+    }
+
+    /**
+     * Helper: Count how many times each pair of players has been teammates and opponents.
+     * Includes matches still in progress, so a match on another court is taken into account.
+     */
+    private static buildMatchupCounts(history: Match[]): { partners: Map<string, number>, opponents: Map<string, number> } {
+        const partners = new Map<string, number>();
+        const opponents = new Map<string, number>();
+        const bump = (counts: Map<string, number>, a: string, b: string) => {
+            const key = this.normalizeTeam(a, b);
+            counts.set(key, (counts.get(key) || 0) + 1);
+        };
+
+        history.forEach(match => {
+            if (match.team1.length === 2) bump(partners, match.team1[0], match.team1[1]);
+            if (match.team2.length === 2) bump(partners, match.team2[0], match.team2[1]);
+            match.team1.forEach(a => match.team2.forEach(b => bump(opponents, a, b)));
+        });
+
+        return { partners, opponents };
+    }
+
+    /**
+     * Helper: Repetition cost of a configuration (lower is better).
+     * Each pairing adds 2*count+1 — the increase of that pairing's squared count —
+     * so pairings that already repeat a lot are penalized the most.
+     */
+    private static scoreRepetitionCost(
+        config: { team1: string[], team2: string[] },
+        counts: { partners: Map<string, number>, opponents: Map<string, number> }
+    ): { cost: number; partnerRepeats: number; opponentRepeats: number } {
+        const partnerCounts = [
+            counts.partners.get(this.normalizeTeam(config.team1[0], config.team1[1])) || 0,
+            counts.partners.get(this.normalizeTeam(config.team2[0], config.team2[1])) || 0,
+        ];
+        const opponentCounts = config.team1.flatMap(a =>
+            config.team2.map(b => counts.opponents.get(this.normalizeTeam(a, b)) || 0)
+        );
+
+        const pairCost = (values: number[]) => values.reduce((sum, c) => sum + 2 * c + 1, 0);
+        const sum = (values: number[]) => values.reduce((total, c) => total + c, 0);
+
+        return {
+            cost: this.BEST_MATCH_PARTNER_WEIGHT * pairCost(partnerCounts) +
+                this.BEST_MATCH_OPPONENT_WEIGHT * pairCost(opponentCounts),
+            partnerRepeats: sum(partnerCounts),
+            opponentRepeats: sum(opponentCounts),
+        };
+    }
+
+    /**
+     * Best Match matchmaking algorithm
+     * Keeps court time fair (rested players first, fewest games played), then picks the
+     * 4 players and team split that least repeat previous teammate and opponent pairings.
+     * Works one court at a time: players in active matches are excluded by the caller,
+     * and those active matches still count as history.
+     */
+    static proposeBestMatch(
+        availablePlayerIds: string[],
+        history: Match[],
+        playerNames?: Map<string, string>
+    ): MatchProposal | null {
+        if (availablePlayerIds.length < 4) return null;
+
+        const fatigued = this.identifyFatiguedPlayers(history);
+        const playerStats = this.calculatePlayerStats(availablePlayerIds, history);
+        const historicalTeams = this.getHistoricalTeams(history);
+        const counts = this.buildMatchupCounts(history);
+
+        // 1. Who plays: avoid fatigued players if possible, then keep only the
+        //    combinations with the fewest games played so nobody is left on the bench
+        const allCombinations = this.generateAllPlayerCombinations(availablePlayerIds);
+        const restedCombinations = allCombinations.filter(combo => combo.every(id => !fatigued.has(id)));
+        const candidatesByFatigue = restedCombinations.length > 0 ? restedCombinations : allCombinations;
+
+        const gamesOf = (combo: string[]) =>
+            combo.reduce((sum, id) => sum + (playerStats.get(id)?.gamesPlayed ?? 0), 0);
+        const minGames = Math.min(...candidatesByFatigue.map(gamesOf));
+        const candidates = candidatesByFatigue.filter(combo => gamesOf(combo) === minGames);
+
+        // 2. Score every team split of every candidate by repetition cost
+        //    Ties go to the players who have waited longest
+        const waitOf = (combo: string[]) =>
+            combo.reduce((sum, id) => sum + Math.min(playerStats.get(id)?.lastPlayedIndex ?? 0, history.length), 0);
+
+        const scoredConfigs = candidates.flatMap(combo => {
+            const wait = waitOf(combo);
+            return this.generateAllConfigurations(combo).map(config => ({
+                config,
+                wait,
+                ...this.scoreRepetitionCost(config, counts),
+            }));
+        });
+        scoredConfigs.sort((a, b) => a.cost - b.cost || b.wait - a.wait);
+
+        const best = scoredConfigs[0];
+        const selectedPlayers = [...best.config.team1, ...best.config.team2];
+
+        // 3. Explain the choice
+        const getName = (id: string) => playerNames?.get(id) || id;
+        const mainReason = best.partnerRepeats === 0 && best.opponentRepeats === 0
+            ? "Best match: all-new teammates and opponents."
+            : `Best match: least repeated pairings (${best.partnerRepeats} previous as teammates, ${best.opponentRepeats} as opponents).`;
+        const breakdown = scoredConfigs.slice(0, 3).map(({ config, cost, partnerRepeats, opponentRepeats }) =>
+            `[${config.team1.map(getName).join(",")}] vs [${config.team2.map(getName).join(",")}]: cost ${cost} (teammates ${partnerRepeats}, opponents ${opponentRepeats})`
+        );
+
+        return {
+            team1: best.config.team1,
+            team2: best.config.team2,
+            reason: `${mainReason} Lowest costs: ${breakdown.join(" | ")}`,
+            mainReason,
+            scoringBreakdown: breakdown,
+            analytics: this.generateAnalytics(history, best.config, selectedPlayers, historicalTeams, fatigued)
         };
     }
 

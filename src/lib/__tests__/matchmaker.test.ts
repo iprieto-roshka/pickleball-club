@@ -209,4 +209,73 @@ describe('Matchmaker', () => {
       expect(result?.reason.length).toBeGreaterThan(0);
     });
   });
+
+  describe('proposeBestMatch', () => {
+    const sessionId = 'session-1';
+    const teamKeys = (result: { team1: string[]; team2: string[] }) =>
+      [result.team1, result.team2].map(team => [...team].sort().join('-')).sort();
+
+    it('should return null when less than 4 players available', () => {
+      expect(Matchmaker.proposeBestMatch(['p1', 'p2', 'p3'], [])).toBeNull();
+    });
+
+    it('should split up players who already teamed up', () => {
+      const history = [
+        createMatch({ id: 'm1', sessionId, team1: ['p1', 'p2'], team2: ['p3', 'p4'], isFinished: true, timestamp: 1000 }),
+        createMatch({ id: 'm2', sessionId, team1: ['p1', 'p2'], team2: ['p3', 'p4'], isFinished: true, timestamp: 2000 }),
+      ];
+
+      const result = Matchmaker.proposeBestMatch(['p1', 'p2', 'p3', 'p4'], history);
+
+      expect(teamKeys(result!)).not.toContain('p1-p2');
+      expect(teamKeys(result!)).not.toContain('p3-p4');
+    });
+
+    it('should pick the team split that balances teammates and opponents', () => {
+      // p1/p4 and p2/p3 have never been teammates, and every opponent pair in that split met only once
+      const history = [
+        createMatch({ id: 'm1', sessionId, team1: ['p1', 'p2'], team2: ['p3', 'p4'], isFinished: true, timestamp: 1000 }),
+        createMatch({ id: 'm2', sessionId, team1: ['p1', 'p3'], team2: ['p2', 'p4'], isFinished: true, timestamp: 2000 }),
+      ];
+
+      const result = Matchmaker.proposeBestMatch(['p1', 'p2', 'p3', 'p4'], history);
+
+      expect(teamKeys(result!)).toEqual(['p1-p4', 'p2-p3']);
+      expect(result?.scoringBreakdown[0]).toContain('cost 16');
+    });
+
+    it('should always include players with fewer games played', () => {
+      const history = [
+        createMatch({ id: 'm1', sessionId, team1: ['p1', 'p2'], team2: ['p3', 'p4'], isFinished: true, timestamp: 1000 }),
+      ];
+
+      const result = Matchmaker.proposeBestMatch(['p1', 'p2', 'p3', 'p4', 'p5', 'p6'], history);
+      const selected = [...result!.team1, ...result!.team2];
+
+      expect(selected).toEqual(expect.arrayContaining(['p5', 'p6']));
+    });
+
+    it('should rest players who played the last 2 matches in a row', () => {
+      const history = [
+        createMatch({ id: 'm1', sessionId, team1: ['p1', 'p2'], team2: ['p3', 'p4'], isFinished: true, timestamp: 1000 }),
+        createMatch({ id: 'm2', sessionId, team1: ['p1', 'p2'], team2: ['p5', 'p6'], isFinished: true, timestamp: 2000 }),
+      ];
+
+      const result = Matchmaker.proposeBestMatch(['p1', 'p2', 'p3', 'p4', 'p5', 'p6'], history);
+      const selected = [...result!.team1, ...result!.team2];
+
+      expect(selected.sort()).toEqual(['p3', 'p4', 'p5', 'p6']);
+    });
+
+    it('should count matches still in progress on another court', () => {
+      // Court 1 just started p1/p2 vs p3/p4; the next proposal for these players must not repeat it
+      const history = [
+        createMatch({ id: 'm1', sessionId, team1: ['p1', 'p2'], team2: ['p3', 'p4'], isFinished: false, timestamp: 1000, courtNumber: 1 }),
+      ];
+
+      const result = Matchmaker.proposeBestMatch(['p1', 'p2', 'p3', 'p4'], history);
+
+      expect(teamKeys(result!)).not.toContain('p1-p2');
+    });
+  });
 });
